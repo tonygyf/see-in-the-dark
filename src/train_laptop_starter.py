@@ -1,20 +1,81 @@
 import argparse
+import csv
 import json
 import random
 from pathlib import Path
 
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 import yaml
 from torch.utils.data import DataLoader, Dataset
 
 
-class TinySegNet(nn.Module):
-    def __init__(self, in_channels: int = 3, base_channels: int = 32, num_classes: int = 1):
+def make_center_target(mask: torch.Tensor, ksize: int = 9) -> torch.Tensor:
+    pad = ksize // 2
+    inv = 1.0 - mask
+    eroded_inv = F.max_pool2d(inv, kernel_size=ksize, stride=1, padding=pad)
+    center = 1.0 - eroded_inv
+    return center.clamp(0.0, 1.0)
+
+
+def tsr_shaping(binary_mask: np.ndarray) -> np.ndarray:
+    mask_u8 = (binary_mask > 0).astype(np.uint8) * 255
+    contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    out = np.zeros_like(mask_u8)
+    for cnt in contours:
+        if cnt.shape[0] < 3:
+            continue
+        rect = cv2.minAreaRect(cnt)
+        box = cv2.boxPoints(rect).astype(np.int32)
+        cv2.fillConvexPoly(out, box, 255)
+    return (out > 127).astype(np.float32)
+
+
+class DSFBlock(nn.Module):
+    def __init__(self, channels: int):
         super().__init__()
+        self.regular = nn.Conv2d(channels, channels, 3, padding=1)
+        self.snake = nn.Sequential(
+            nn.Conv2d(channels, channels, (1, 5), padding=(0, 2)),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels, channels, (5, 1), padding=(2, 0)),
+        )
+        self.gate = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(channels * 2, 2, 1),
+        )
+        self.fuse = nn.Conv2d(channels * 2, channels, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        v_reg = self.regular(x)
+        v_snake = self.snake(x)
+        v_cat = torch.cat([v_reg, v_snake], dim=1)
+        gate_logits = self.gate(v_cat)
+        gate = torch.softmax(gate_logits, dim=1)
+        out = gate[:, 0:1] * v_reg + gate[:, 1:2] * v_snake
+        return self.fuse(torch.cat([out, x], dim=1))
+
+
+class TinySegNet(nn.Module):
+    def __init__(
+        self,
+        in_channels: int = 3,
+        base_channels: int = 32,
+        num_classes: int = 1,
+        enable_scm: bool = False,
+        enable_dsf: bool = False,
+        enable_tsr: bool = False,
+    ):
+        super().__init__()
+        self.enable_scm = enable_scm
+        self.enable_dsf = enable_dsf
+        self.enable_tsr = enable_tsr
+
         self.encoder = nn.Sequential(
             nn.Conv2d(in_channels, base_channels, 3, padding=1),
             nn.ReLU(inplace=True),
@@ -24,14 +85,34 @@ class TinySegNet(nn.Module):
             nn.Conv2d(base_channels, base_channels * 2, 3, padding=1),
             nn.ReLU(inplace=True),
         )
-        self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(base_channels * 2, base_channels, 2, stride=2),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(base_channels, num_classes, 1),
-        )
+        if self.enable_dsf:
+            self.dsf = DSFBlock(base_channels * 2)
+        self.up = nn.ConvTranspose2d(base_channels * 2, base_channels, 2, stride=2)
+        self.up_act = nn.ReLU(inplace=True)
+        self.main_head = nn.Conv2d(base_channels, num_classes, 1)
+        if self.enable_scm:
+            self.scm_head = nn.Sequential(
+                nn.Conv2d(base_channels * 2, base_channels, 3, padding=1),
+                nn.ReLU(inplace=True),
+                nn.ConvTranspose2d(base_channels, base_channels // 2, 2, stride=2),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(base_channels // 2, num_classes, 1),
+            )
+        if self.enable_tsr:
+            self.center_head = nn.Conv2d(base_channels, 1, 1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.decoder(self.encoder(x))
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        enc = self.encoder(x)
+        if self.enable_dsf:
+            enc = self.dsf(enc)
+        dec = self.up_act(self.up(enc))
+        logits = self.main_head(dec)
+        out: dict[str, torch.Tensor] = {"logits": logits, "dec_feat": dec}
+        if self.enable_scm:
+            out["aux_logits"] = self.scm_head(enc)
+        if self.enable_tsr:
+            out["center_logits"] = self.center_head(dec)
+        return out
 
 
 class CTW1500PaddleDataset(Dataset):
@@ -164,6 +245,70 @@ def maybe_build_ctw1500_loader(cfg: dict, batch_size: int, image_size: int) -> D
     return loader
 
 
+def save_training_artifacts(
+    out_dir: Path,
+    loss_history: list[float],
+    vis_triplet: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None,
+    enable_tsr: bool,
+) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    csv_path = out_dir / "train_loss.csv"
+    with csv_path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["step", "loss"])
+        for i, loss_val in enumerate(loss_history, start=1):
+            writer.writerow([i, f"{loss_val:.6f}"])
+
+    curve_path = out_dir / "train_loss_curve.png"
+    plt.figure(figsize=(8, 4.5))
+    plt.plot(range(1, len(loss_history) + 1), loss_history, marker="o", linewidth=1.5)
+    plt.xlabel("Step")
+    plt.ylabel("Loss")
+    plt.title("Training Loss Curve")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(curve_path, dpi=160)
+    plt.close()
+
+    if vis_triplet is None:
+        return
+
+    x_vis, y_vis, pred_vis = vis_triplet
+    x_np = x_vis.detach().cpu().numpy().transpose(1, 2, 0)
+    y_np = y_vis.detach().cpu().numpy().squeeze(0)
+    p_np = pred_vis.detach().cpu().numpy().squeeze(0)
+    p_bin = (p_np > 0.5).astype(np.float32)
+    if enable_tsr:
+        p_tsr = tsr_shaping(p_bin)
+    else:
+        p_tsr = None
+
+    x_np = np.clip(x_np, 0.0, 1.0)
+    y_np = np.clip(y_np, 0.0, 1.0)
+    p_np = np.clip(p_np, 0.0, 1.0)
+
+    ncols = 5 if p_tsr is not None else 4
+    fig, axes = plt.subplots(1, ncols, figsize=(16, 4))
+    axes[0].imshow(x_np)
+    axes[0].set_title("Input")
+    axes[1].imshow(y_np, cmap="gray", vmin=0, vmax=1)
+    axes[1].set_title("GT Mask")
+    axes[2].imshow(p_np, cmap="magma", vmin=0, vmax=1)
+    axes[2].set_title("Pred Prob")
+    axes[3].imshow(p_bin, cmap="gray", vmin=0, vmax=1)
+    axes[3].set_title("Pred Binary")
+    if p_tsr is not None:
+        axes[4].imshow(p_tsr, cmap="gray", vmin=0, vmax=1)
+        axes[4].set_title("TSR Shape")
+    for ax in axes:
+        ax.axis("off")
+    plt.tight_layout()
+    vis_path = out_dir / "prediction_sample.png"
+    plt.savefig(vis_path, dpi=160)
+    plt.close(fig)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -186,11 +331,27 @@ def main() -> None:
 
     train_cfg = cfg["train"]
     model_cfg = cfg["model"]
+    module_cfg = cfg.get("modules", {})
+    enable_scm = bool(module_cfg.get("enable_scm", False))
+    enable_dsf = bool(module_cfg.get("enable_dsf", False))
+    enable_tsr = bool(module_cfg.get("enable_tsr", False))
+    loss_cfg = cfg.get("loss", {})
+    w_lsr = float(loss_cfg.get("w_lsr", 0.3))
+    w_lss = float(loss_cfg.get("w_lss", 0.2))
+    w_tsr_center = float(loss_cfg.get("w_tsr_center", 0.25))
+    exp_cfg = cfg.get("experiment", {})
+    exp_name = str(exp_cfg.get("name", "default"))
+    out_dir = Path(exp_cfg.get("out_dir", f"runs/experiments/{exp_name}"))
+    print(f"[Exp] name={exp_name}, out_dir={out_dir}")
+    print(f"[Modules] SCM={enable_scm}, DSF={enable_dsf}, TSR={enable_tsr}")
 
     model = TinySegNet(
         in_channels=model_cfg["in_channels"],
         base_channels=model_cfg["base_channels"],
         num_classes=model_cfg["num_classes"],
+        enable_scm=enable_scm,
+        enable_dsf=enable_dsf,
+        enable_tsr=enable_tsr,
     ).to(device)
     model = maybe_prepare_qat(model, cfg)
 
@@ -212,6 +373,8 @@ def main() -> None:
     data_iter = iter(loader) if loader is not None else None
 
     global_step = 0
+    loss_history: list[float] = []
+    vis_triplet: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None
     for epoch in range(1, epochs + 1):
         model.train()
         running_loss = 0.0
@@ -235,8 +398,22 @@ def main() -> None:
                 x = x.to(memory_format=torch.channels_last)
 
             with torch.amp.autocast("cuda", enabled=bool(train_cfg.get("amp", True) and device.type == "cuda")):
-                logits = model(x)
-                loss = criterion(logits, y) / grad_accum_steps
+                outputs = model(x)
+                logits = outputs["logits"]
+                main_loss = criterion(logits, y)
+                total_loss = main_loss
+                if enable_scm and "aux_logits" in outputs:
+                    aux_logits = outputs["aux_logits"]
+                    lsr = criterion(aux_logits, y)
+                    with torch.no_grad():
+                        main_prob = torch.sigmoid(logits.detach())
+                    lss = F.mse_loss(torch.sigmoid(aux_logits), main_prob)
+                    total_loss = total_loss + w_lsr * lsr + w_lss * lss
+                if enable_tsr and "center_logits" in outputs:
+                    center_target = make_center_target(y)
+                    center_loss = criterion(outputs["center_logits"], center_target)
+                    total_loss = total_loss + w_tsr_center * center_loss
+                loss = total_loss / grad_accum_steps
 
             scaler.scale(loss).backward()
 
@@ -248,6 +425,7 @@ def main() -> None:
                 optimizer.zero_grad(set_to_none=True)
 
             running_loss += loss.item() * grad_accum_steps
+            loss_history.append(loss.item() * grad_accum_steps)
             global_step += 1
 
             if step % log_interval == 0:
@@ -259,14 +437,31 @@ def main() -> None:
                     f"loss={running_loss / step:.4f} max_mem={max_mem:.2f}GB"
                 )
 
+            if step == steps_per_epoch:
+                with torch.no_grad():
+                    pred_prob = torch.sigmoid(logits[:1])
+                    vis_triplet = (
+                        x[:1].detach()[0],
+                        y[:1].detach()[0],
+                        pred_prob[0],
+                    )
+
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats()
 
-    out_dir = Path("runs")
     out_dir.mkdir(parents=True, exist_ok=True)
     ckpt = out_dir / "starter_last.pt"
     torch.save({"model": model.state_dict(), "config": cfg}, ckpt)
+    save_training_artifacts(
+        out_dir=out_dir,
+        loss_history=loss_history,
+        vis_triplet=vis_triplet,
+        enable_tsr=enable_tsr,
+    )
     print(f"[Done] Saved checkpoint to: {ckpt}")
+    print(f"[Done] Saved loss csv to: {out_dir / 'train_loss.csv'}")
+    print(f"[Done] Saved loss curve to: {out_dir / 'train_loss_curve.png'}")
+    print(f"[Done] Saved prediction sample to: {out_dir / 'prediction_sample.png'}")
 
 
 if __name__ == "__main__":

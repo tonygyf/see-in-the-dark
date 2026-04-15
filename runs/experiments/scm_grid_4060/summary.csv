@@ -1,0 +1,5 @@
+experiment,final_loss,max_mem_gb,loss_curve,pred_vis
+base_no_scm,0.694559,1.20,D:/typer/cursor project/see in the dark/runs/experiments/scm_grid_4060/base_no_scm/train_loss_curve.png,D:/typer/cursor project/see in the dark/runs/experiments/scm_grid_4060/base_no_scm/prediction_sample.png
+scm_w10_5,0.580900,1.21,D:/typer/cursor project/see in the dark/runs/experiments/scm_grid_4060/scm_w10_5/train_loss_curve.png,D:/typer/cursor project/see in the dark/runs/experiments/scm_grid_4060/scm_w10_5/prediction_sample.png
+scm_w20_10,0.620455,1.21,D:/typer/cursor project/see in the dark/runs/experiments/scm_grid_4060/scm_w20_10/train_loss_curve.png,D:/typer/cursor project/see in the dark/runs/experiments/scm_grid_4060/scm_w20_10/prediction_sample.png
+scm_w30_20,0.653959,1.21,D:/typer/cursor project/see in the dark/runs/experiments/scm_grid_4060/scm_w30_20/train_loss_curve.png,D:/typer/cursor project/see in the dark/runs/experiments/scm_grid_4060/scm_w30_20/prediction_sample.png

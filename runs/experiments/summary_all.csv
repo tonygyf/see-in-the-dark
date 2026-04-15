@@ -1,0 +1,12 @@
+experiment,final_loss,steps,has_curve,has_pred,has_ckpt,status,loss_csv
+ctw1500_lowlight_1000step_4060,0.483495,1000,True,True,True,ok,D:/typer/cursor project/see in the dark/runs/experiments/ctw1500_lowlight_1000step_4060/train_loss.csv
+tsr_only_4060,0.495868,1200,True,True,True,ok,D:/typer/cursor project/see in the dark/runs/experiments/tsr_only_4060/train_loss.csv
+dsf_only_4060,0.516334,1200,True,True,True,ok,D:/typer/cursor project/see in the dark/runs/experiments/dsf_only_4060/train_loss.csv
+scm_grid_4060/scm_w10_5,0.580900,800,True,True,True,ok,D:/typer/cursor project/see in the dark/runs/experiments/scm_grid_4060/scm_w10_5/train_loss.csv
+scm_grid_4060/scm_w20_10,0.620455,800,True,True,True,ok,D:/typer/cursor project/see in the dark/runs/experiments/scm_grid_4060/scm_w20_10/train_loss.csv
+scm_grid_4060/scm_w30_20,0.653959,800,True,True,True,ok,D:/typer/cursor project/see in the dark/runs/experiments/scm_grid_4060/scm_w30_20/train_loss.csv
+all_modules_4060,0.656898,1200,True,True,True,ok,D:/typer/cursor project/see in the dark/runs/experiments/all_modules_4060/train_loss.csv
+ctw1500_lowlight_smoke_4060,0.669184,10,True,True,True,ok,D:/typer/cursor project/see in the dark/runs/experiments/ctw1500_lowlight_smoke_4060/train_loss.csv
+default,0.669184,10,True,True,True,ok,D:/typer/cursor project/see in the dark/runs/experiments/default/train_loss.csv
+scm_grid_4060/base_no_scm,0.694559,800,True,True,True,ok,D:/typer/cursor project/see in the dark/runs/experiments/scm_grid_4060/base_no_scm/train_loss.csv
+scm_only_4060,0.759101,1200,True,True,True,ok,D:/typer/cursor project/see in the dark/runs/experiments/scm_only_4060/train_loss.csv

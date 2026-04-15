@@ -66,13 +66,13 @@ data/
 *.gz
 *.rar
 
-# 实验记录、日志、TensorBoard
-runs/
-logs/
-*.log
-tensorboard/
-lightning_logs/
-wandb/
+# # 实验记录、日志、TensorBoard
+# runs/
+# logs/
+# *.log
+# tensorboard/
+# lightning_logs/
+# wandb/
 
 # 临时文件和缓存
 *.tmp

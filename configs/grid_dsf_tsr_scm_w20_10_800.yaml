@@ -1,0 +1,44 @@
+seed: 42
+device: cuda
+
+experiment:
+  name: grid_dsf_tsr_scm_w20_10_800
+  out_dir: runs/experiments/scm_grid_4060/scm_w20_10
+
+train:
+  epochs: 1
+  steps_per_epoch: 800
+  batch_size: 4
+  image_size: 640
+  lr: 0.0002
+  grad_accum_steps: 2
+  amp: true
+  channels_last: true
+  clip_grad_norm: 1.0
+  log_interval: 100
+
+model:
+  in_channels: 3
+  base_channels: 32
+  num_classes: 1
+
+modules:
+  enable_scm: true
+  enable_dsf: true
+  enable_tsr: true
+
+loss:
+  w_lsr: 0.20
+  w_lss: 0.10
+  w_tsr_center: 0.25
+
+data:
+  use_ctw1500_paddle_test: true
+  imgs_root: data/raw/ctw1500/paddle_format/ctw1500/imgs
+  split_file: data/raw/ctw1500/paddle_format/ctw1500/imgs/test.txt
+  num_workers: 2
+  pin_memory: true
+
+quantization:
+  enable_qat: false
+  backend: fbgemm

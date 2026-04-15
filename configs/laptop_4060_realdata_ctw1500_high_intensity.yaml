@@ -1,0 +1,31 @@
+seed: 42
+device: cuda
+
+train:
+  epochs: 1
+  steps_per_epoch: 2000
+  batch_size: 4
+  image_size: 640
+  lr: 0.0002
+  grad_accum_steps: 2
+  amp: true
+  channels_last: true
+  clip_grad_norm: 1.0
+  log_interval: 100
+
+model:
+  in_channels: 3
+  base_channels: 32
+  num_classes: 1
+
+data:
+  use_ctw1500_paddle_test: true
+  imgs_root: data/raw/ctw1500/paddle_format/ctw1500/imgs
+  split_file: data/raw/ctw1500/paddle_format/ctw1500/imgs/test.txt
+  num_workers: 2
+  pin_memory: true
+
+quantization:
+  enable_qat: false
+  backend: fbgemm
+  note: "4060 laptop 强度提升版：更大分辨率、更大 batch、更长 step。"
