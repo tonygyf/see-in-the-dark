@@ -1,0 +1,23 @@
+seed: 42
+device: cuda
+
+train:
+  epochs: 1
+  steps_per_epoch: 80
+  batch_size: 2
+  image_size: 512
+  lr: 0.0002
+  grad_accum_steps: 8
+  amp: true
+  channels_last: true
+  clip_grad_norm: 1.0
+
+model:
+  in_channels: 3
+  base_channels: 32
+  num_classes: 1
+
+quantization:
+  enable_qat: false
+  backend: fbgemm
+  note: "先用AMP+小batch稳定训练；QAT第二阶段再开。"
