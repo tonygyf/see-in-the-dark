@@ -1,7 +1,8 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-Set-Location "d:\typer\cursor project\see in the dark"
+$projectRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $projectRoot
 
 if (-not (Test-Path ".\.venv\Scripts\python.exe")) {
     throw "Virtual env not found: .venv"
